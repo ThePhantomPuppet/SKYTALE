@@ -10842,7 +10842,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
                   {t('Du hast Benachrichtigungen abgelehnt. Der Browser fragt nicht noch einmal — du musst sie in den Geräte-Einstellungen wieder erlauben.')}
                 </p>
                 <p className="backup-hint" style={{ textAlign: 'left' }}>
-                  {t('Auf dem iPhone: Einstellungen öffnen → nach unten zu SKYTALE scrollen → „Mitteilungen“ → „Mitteilungen erlauben“ aktivieren. Danach hierher zurückkommen — der Schalter ist dann wieder frei.')}
+                  {t('Auf dem iPhone: Einstellungen → Apps → SKYTALE → Benachrichtigungen öffnen und „Benachrichtigungen erlauben“ aktivieren. Danach hierher zurückkommen — der Schalter ist dann wieder frei.')}
                 </p>
               </div>
               <div className="crop-actions">
