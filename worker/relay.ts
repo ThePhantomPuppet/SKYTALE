@@ -28,7 +28,6 @@ export interface Env {
   RELAY_GUARD: DurableObjectNamespace<RelayActorGuard>;
   RELAY_RATE: RateLimit;
   UPLOAD_RATE: RateLimit;
-  BUG_RATE: RateLimit;
   ASSETS: Fetcher;
   // R2 bucket for large encrypted attachments (see wrangler.toml). Holds ciphertext
   // ONLY — the per-file key never leaves the E2E envelope. Absent => big files disabled.
@@ -38,15 +37,6 @@ export interface Env {
   VAPID_PUBLIC?: string;
   VAPID_SUBJECT?: string;
   VAPID_JWK?: string;
-  // Optional bug-report sink. Two ways, checked in this order. If neither is
-  // configured, /api/bug fails with 503 rather than claiming the report arrived:
-  //  1. Resend email — set the secret RESEND_API_KEY plus the vars BUG_FROM (a verified
-  //     sender, e.g. "SKYTALE <bugs@skytale.chat>") and BUG_TO (your inbox).
-  //  2. A generic incoming webhook (Discord/Slack) — set the secret BUG_WEBHOOK_URL.
-  RESEND_API_KEY?: string;
-  BUG_FROM?: string;
-  BUG_TO?: string;
-  BUG_WEBHOOK_URL?: string;
 }
 
 interface Att {

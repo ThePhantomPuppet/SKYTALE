@@ -2,72 +2,103 @@ import { useState } from 'react';
 import { t, getLang } from './lib/i18n';
 
 /**
- * Bug report / feedback. The form POSTs a short JSON report to the app's OWN origin
- * (/api/bug — allowed by `connect-src 'self'`); the Worker forwards it server-side to
- * a configured delivery sink and reports success only after that sink accepts it.
- * NOTHING end-to-end leaves the device: only the
- * description and, opt-in, non-sensitive diagnostics (version, browser) — never
- * messages, contacts or keys. If the send fails, a copy-to-clipboard fallback lets the
- * user paste it elsewhere.
+ * Bug report / feedback. The dialog assembles a categorised report WITH a detailed,
+ * strictly non-sensitive situation picture (device / environment / runtime — never
+ * messages, contacts or keys) and hands the finished text to the Messenger, which
+ * sends it as a normal end-to-end message to the official SKYTALE-SUPPORT account.
+ * The admin therefore sees the ticket type at a glance and has everything needed to
+ * reproduce, and can reply / ask follow-up questions in the very same chat.
  */
 declare const __APP_VERSION__: string;
 declare const __BUILD_HASH__: string;
 
-const CATEGORIES: { key: string; label: () => string }[] = [
-  { key: 'bug', label: () => t('Etwas funktioniert nicht') },
-  { key: 'crash', label: () => t('Absturz / Fehler') },
-  { key: 'idea', label: () => t('Vorschlag / Feedback') },
-  { key: 'other', label: () => t('Sonstiges') },
+// The leading emoji makes the ticket type scannable in the admin's chat list.
+const CATEGORIES: { key: string; emoji: string; label: () => string }[] = [
+  { key: 'bug', emoji: '🐛', label: () => t('Etwas funktioniert nicht') },
+  { key: 'crash', emoji: '💥', label: () => t('Absturz / Fehler') },
+  { key: 'idea', emoji: '💡', label: () => t('Vorschlag / Feedback') },
+  { key: 'other', emoji: '❓', label: () => t('Sonstiges') },
 ];
 
-function diagnostics(): string {
+/** Everything useful for reproducing an issue, and NOTHING sensitive: no messages,
+ * no contacts, no keys, no usage counts — only device / environment / runtime. */
+async function diagnostics(): Promise<string> {
   const L: string[] = [];
+  const push = (k: string, v: unknown) => L.push(`${k}: ${v ?? '?'}`);
+  const nav = navigator as Navigator & {
+    connection?: { effectiveType?: string };
+    deviceMemory?: number;
+  };
+  const mm = (q: string) => window.matchMedia?.(q).matches;
+  const mb = (b: unknown) => (typeof b === 'number' ? `${Math.round(b / 1048576)} MB` : '?');
   try {
-    L.push(
-      `Version: ${typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '?'}${typeof __BUILD_HASH__ !== 'undefined' ? '+' + __BUILD_HASH__ : ''}`,
+    push(
+      'Version',
+      `${typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '?'}${typeof __BUILD_HASH__ !== 'undefined' ? '+' + __BUILD_HASH__ : ''}`,
     );
-    L.push(`App-Sprache: ${getLang()}`);
-    L.push(`Browser: ${navigator.userAgent || '?'}`);
-    L.push(`Plattform: ${navigator.platform || '?'}`);
-    L.push(`System-Sprache: ${navigator.language || '?'}`);
-    L.push(`Auflösung: ${window.screen?.width ?? '?'}x${window.screen?.height ?? '?'}`);
-    L.push(`Standalone: ${window.matchMedia?.('(display-mode: standalone)').matches ? 'ja' : 'nein'}`);
-    L.push(`Datum: ${new Date().toISOString()}`);
+    push('App-Sprache', getLang());
+    push('System-Sprache', nav.language);
+    push('Plattform', nav.platform);
+    push('Browser', nav.userAgent);
+    push('Bildschirm', `${window.screen?.width ?? '?'}×${window.screen?.height ?? '?'} @${window.devicePixelRatio ?? 1}x`);
+    push('Fenster', `${window.innerWidth}×${window.innerHeight}`);
+    push('PWA (Standalone)', mm('(display-mode: standalone)') ? 'ja' : 'nein');
+    push('Theme', mm('(prefers-color-scheme: dark)') ? 'dunkel' : 'hell');
+    push('Reduzierte Bewegung', mm('(prefers-reduced-motion: reduce)') ? 'ja' : 'nein');
+    push('Online', nav.onLine ? 'ja' : 'nein');
+    push('Verbindung', nav.connection?.effectiveType);
+    push('Gerätespeicher (RAM)', nav.deviceMemory ? `~${nav.deviceMemory} GB` : '?');
+    push('CPU-Kerne', nav.hardwareConcurrency);
+    push('Zeitzone', Intl.DateTimeFormat().resolvedOptions().timeZone);
+    push('Datum', new Date().toISOString());
+    push('Service Worker', nav.serviceWorker?.controller ? 'aktiv' : 'keiner');
+    if (nav.storage?.estimate) {
+      const est = await nav.storage.estimate();
+      push('Speicher', `${mb(est.usage)} / ${mb(est.quota)} genutzt`);
+    }
   } catch {
     /* best-effort */
   }
   return L.join('\n');
 }
 
-export function BugReport({ onClose }: { onClose: () => void }) {
+async function assembleReport(cat: string, msg: string, includeDiag: boolean): Promise<string> {
+  const category = CATEGORIES.find((c) => c.key === cat) ?? CATEGORIES[0];
+  const header = `${category.emoji} ${category.label()}`;
+  const diag = includeDiag ? `\n\n— ${t('Geräte-Infos')} —\n${await diagnostics()}` : '';
+  return `${header}\n\n${msg.trim()}${diag}`;
+}
+
+export function BugReport({
+  onClose,
+  onSubmit,
+}: {
+  onClose: () => void;
+  /** Sends the finished report as a message to SKYTALE-SUPPORT; throws on failure. */
+  onSubmit: (message: string) => Promise<void>;
+}) {
   const [cat, setCat] = useState('bug');
   const [msg, setMsg] = useState('');
-  // Diagnostics are genuinely opt-in; opening the dialog must not preselect
-  // device/browser metadata for transmission.
-  const [diag, setDiag] = useState(false);
+  // Default ON so the admin gets a detailed picture, but visible + opt-out: the
+  // attached block is strictly device/environment info, never content.
+  const [diag, setDiag] = useState(true);
   const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
 
   async function send() {
     if (!msg.trim() || state === 'sending') return;
     setState('sending');
     try {
-      const res = await fetch('/api/bug', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ category: cat, message: msg.trim(), diagnostics: diag ? diagnostics() : '' }),
-      });
-      if (!res.ok) throw new Error();
+      await onSubmit(await assembleReport(cat, msg, diag));
       setState('sent');
-      window.setTimeout(onClose, 1400);
+      window.setTimeout(onClose, 1200);
     } catch {
       setState('error');
     }
   }
 
   async function copyInstead() {
-    const full = `[${cat}]\n${msg.trim()}${diag ? `\n\n${diagnostics()}` : ''}`;
     try {
-      await navigator.clipboard.writeText(full);
+      await navigator.clipboard.writeText(await assembleReport(cat, msg, diag));
     } catch {
       /* clipboard blocked */
     }
@@ -79,10 +110,13 @@ export function BugReport({ onClose }: { onClose: () => void }) {
       <div className="backup-body">
         {state === 'sent' ? (
           <div className="info-note" style={{ textAlign: 'left' }}>
-            <p>{t('Danke! Dein Bericht ist angekommen.')}</p>
+            <p>{t('Danke! Deine Meldung ist im Support-Chat — dort kannst du weiterschreiben.')}</p>
           </div>
         ) : (
           <>
+            <p className="backup-hint" style={{ textAlign: 'left', marginTop: 0 }}>
+              {t('Geht direkt an den SKYTALE-Support — du bekommst die Antwort in diesem Chat.')}
+            </p>
             <div className="bug-cats">
               {CATEGORIES.map((c) => (
                 <button
@@ -91,7 +125,7 @@ export function BugReport({ onClose }: { onClose: () => void }) {
                   className={`bug-cat${cat === c.key ? ' on' : ''}`}
                   onClick={() => setCat(c.key)}
                 >
-                  {c.label()}
+                  {c.emoji} {c.label()}
                 </button>
               ))}
             </div>
@@ -108,7 +142,7 @@ export function BugReport({ onClose }: { onClose: () => void }) {
             </label>
             <label className="bug-diag">
               <input type="checkbox" checked={diag} onChange={(e) => setDiag(e.target.checked)} />
-              <span>{t('Geräte-Infos anhängen (Version, Browser) — nie Nachrichten, Kontakte oder Schlüssel.')}</span>
+              <span>{t('Geräte-Infos für die Fehlersuche anhängen (Version, Browser, Speicher …) — nie Nachrichten, Kontakte oder Schlüssel.')}</span>
             </label>
             {state === 'error' && (
               <div className="err-note">

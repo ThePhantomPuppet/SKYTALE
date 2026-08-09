@@ -7790,6 +7790,35 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
     bump();
   }
 
+  /** Support flow: resolve/add the official SKYTALE-SUPPORT account and open its
+   * chat, then open the report dialog over it. addBundle surfaces its own error if
+   * support is unavailable (e.g. not yet activated), in which case we don't open. */
+  async function startBugReport(signal?: AbortSignal): Promise<void> {
+    await addBundle(OFFICIAL_ACCOUNT_ALIAS, signal);
+    const support = contactsRef.current.find((c) =>
+      isOfficialAdminContact(c, officialAccountTrustRef.current),
+    );
+    if (support) setBugOpen(true);
+  }
+
+  /** Send the assembled report as a normal E2E message to SKYTALE-SUPPORT (targeted
+   * at the support contact, never merely the active chat), so the admin gets a
+   * categorised ticket and can reply in the same conversation. */
+  async function submitBugReport(message: string): Promise<void> {
+    const support = contactsRef.current.find((c) =>
+      isOfficialAdminContact(c, officialAccountTrustRef.current),
+    );
+    if (!support) throw new Error('Support nicht verfügbar');
+    const mid = randomMid();
+    const ts = Date.now();
+    const content: MessageContent = { kind: 'text', text: message };
+    const deliveries = await fanoutSend(support, content, mid);
+    void syncToOwnDevices(support.peerMasterPub, 'sent', mid, ts, content);
+    await appendMessage(support.roomId, { mine: true, text: message, ts, mid, deliveries });
+    void ensureProfileSent(support);
+    bump();
+  }
+
   async function onSend() {
     setError('');
     const text = (msgInputRef.current?.value ?? '').trim();
@@ -10708,7 +10737,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
               <span className="setting-go"><IconChevron /></span>
             </button>
 
-            <button className="setting-row" onClick={() => setBugOpen(true)}>
+            <button className="setting-row" onClick={() => launchRuntimeOperation((signal) => startBugReport(signal))}>
               <span className="setting-ic"><IconBug /></span>
               <span className="setting-tx">
                 <span className="setting-title">{t('Fehler melden')}</span>
@@ -10770,7 +10799,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
               runRuntimeOperation={runRuntimeOperation}
             />
           )}
-          {bugOpen && <BugReport onClose={() => setBugOpen(false)} />}
+          {bugOpen && <BugReport onClose={() => setBugOpen(false)} onSubmit={submitBugReport} />}
           {bioEnroll && (
             <BiometricEnroll
               runRuntimeOperation={runRuntimeOperation}

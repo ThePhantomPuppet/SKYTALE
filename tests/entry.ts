@@ -282,8 +282,3 @@ export {
   loadOfficialAccountTrust,
   saveOfficialAccountTrust,
 } from '../src/lib/officialAccountStore';
-export {
-  BUG_REPORT_CATEGORIES,
-  isBugReportCategory,
-  bugReportWebhookPayload,
-} from '../worker/bug-report';
