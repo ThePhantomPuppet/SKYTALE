@@ -9513,6 +9513,10 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
           </div>
         )}
       </main>
+      {/* Rendered at shell level, not inside any single view: startBugReport opens the
+          SKYTALE-SUPPORT chat, so the dialog must survive that navigation and show over
+          whichever view is current (chat after opening, or settings if it hasn't yet). */}
+      {bugOpen && <BugReport onClose={() => setBugOpen(false)} onSubmit={submitBugReport} />}
     </div>
   );
 
@@ -10799,7 +10803,6 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
               runRuntimeOperation={runRuntimeOperation}
             />
           )}
-          {bugOpen && <BugReport onClose={() => setBugOpen(false)} onSubmit={submitBugReport} />}
           {bioEnroll && (
             <BiometricEnroll
               runRuntimeOperation={runRuntimeOperation}
