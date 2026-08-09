@@ -1002,6 +1002,11 @@ html.privacy-curtain-on .privacy-curtain {
   font-size: 14.5px;
   line-height: 1.4;
   word-wrap: break-word;
+  /* Preserve the sender's line breaks (and wrap long lines): a multi-line message —
+     e.g. a structured support ticket — must render as written, not collapse into one
+     run-on line the way white-space: normal would. */
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
   /* No `both` fill-mode: it would pin the keyframe's `transform: none` after the
      entrance finishes and override the drag-to-reply transform we set inline. */
   animation: msg-in 0.2s var(--ease-out);

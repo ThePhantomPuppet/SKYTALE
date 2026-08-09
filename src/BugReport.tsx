@@ -20,53 +20,80 @@ const CATEGORIES: { key: string; emoji: string; label: () => string }[] = [
   { key: 'other', emoji: '❓', label: () => t('Sonstiges') },
 ];
 
+const RULE = '─'.repeat(16);
+
 /** Everything useful for reproducing an issue, and NOTHING sensitive: no messages,
- * no contacts, no keys, no usage counts — only device / environment / runtime. */
+ * no contacts, no keys, no usage counts — only device / environment / runtime.
+ * Grouped into labelled sections with one datum per line so the admin can SKIM the
+ * ticket instead of parsing a wall of text. Labels stay German (admin-facing). */
 async function diagnostics(): Promise<string> {
-  const L: string[] = [];
-  const push = (k: string, v: unknown) => L.push(`${k}: ${v ?? '?'}`);
   const nav = navigator as Navigator & {
     connection?: { effectiveType?: string };
     deviceMemory?: number;
   };
   const mm = (q: string) => window.matchMedia?.(q).matches;
   const mb = (b: unknown) => (typeof b === 'number' ? `${Math.round(b / 1048576)} MB` : '?');
+  const yn = (b: unknown) => (b ? 'ja' : 'nein');
+
+  let storage = '?';
   try {
-    push(
-      'Version',
-      `${typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '?'}${typeof __BUILD_HASH__ !== 'undefined' ? '+' + __BUILD_HASH__ : ''}`,
-    );
-    push('App-Sprache', getLang());
-    push('System-Sprache', nav.language);
-    push('Plattform', nav.platform);
-    push('Browser', nav.userAgent);
-    push('Bildschirm', `${window.screen?.width ?? '?'}×${window.screen?.height ?? '?'} @${window.devicePixelRatio ?? 1}x`);
-    push('Fenster', `${window.innerWidth}×${window.innerHeight}`);
-    push('PWA (Standalone)', mm('(display-mode: standalone)') ? 'ja' : 'nein');
-    push('Theme', mm('(prefers-color-scheme: dark)') ? 'dunkel' : 'hell');
-    push('Reduzierte Bewegung', mm('(prefers-reduced-motion: reduce)') ? 'ja' : 'nein');
-    push('Online', nav.onLine ? 'ja' : 'nein');
-    push('Verbindung', nav.connection?.effectiveType);
-    push('Gerätespeicher (RAM)', nav.deviceMemory ? `~${nav.deviceMemory} GB` : '?');
-    push('CPU-Kerne', nav.hardwareConcurrency);
-    push('Zeitzone', Intl.DateTimeFormat().resolvedOptions().timeZone);
-    push('Datum', new Date().toISOString());
-    push('Service Worker', nav.serviceWorker?.controller ? 'aktiv' : 'keiner');
     if (nav.storage?.estimate) {
       const est = await nav.storage.estimate();
-      push('Speicher', `${mb(est.usage)} / ${mb(est.quota)} genutzt`);
+      storage = `${mb(est.usage)} / ${mb(est.quota)}`;
     }
   } catch {
-    /* best-effort */
+    /* storage estimate unavailable */
   }
-  return L.join('\n');
+
+  const version = `${typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '?'}${
+    typeof __BUILD_HASH__ !== 'undefined' ? '+' + __BUILD_HASH__ : ''
+  }`;
+  let clock = '?';
+  try {
+    clock = new Date().toLocaleString('de-DE');
+  } catch {
+    /* locale formatting unavailable */
+  }
+
+  const sections: [string, string[]][] = [
+    ['🧩 App', [
+      `Version: ${version}`,
+      `Sprache: ${getLang()} · System ${nav.language || '?'}`,
+    ]],
+    ['📱 Gerät', [
+      `Plattform: ${nav.platform || '?'}`,
+      `Browser: ${nav.userAgent || '?'}`,
+      `RAM: ${nav.deviceMemory ? `~${nav.deviceMemory} GB` : '?'} · CPU ${nav.hardwareConcurrency ?? '?'} Kerne`,
+    ]],
+    ['🖥️ Anzeige', [
+      `Bildschirm: ${window.screen?.width ?? '?'} × ${window.screen?.height ?? '?'} @${window.devicePixelRatio ?? 1}x`,
+      `Fenster: ${window.innerWidth} × ${window.innerHeight}`,
+      `PWA-Standalone: ${yn(mm('(display-mode: standalone)'))} · Theme ${mm('(prefers-color-scheme: dark)') ? 'dunkel' : 'hell'}`,
+      `Reduzierte Bewegung: ${yn(mm('(prefers-reduced-motion: reduce)'))}`,
+    ]],
+    ['🌐 Umgebung', [
+      `Online: ${yn(nav.onLine)}${nav.connection?.effectiveType ? ` · ${nav.connection.effectiveType}` : ''}`,
+      `Service Worker: ${nav.serviceWorker?.controller ? 'aktiv' : 'keiner'}`,
+      `Zeitzone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`,
+      `Zeit: ${clock}`,
+    ]],
+    ['💾 Speicher', [`Belegt: ${storage}`]],
+  ];
+
+  return sections
+    .map(([title, lines]) => [title, ...lines.map((l) => `• ${l}`)].join('\n'))
+    .join('\n\n');
 }
 
+/** The ticket the admin receives: a clear category line, the user's own words set
+ * off between rules, then the grouped diagnostics — all newline-structured (the
+ * chat bubble renders it verbatim via white-space: pre-wrap). */
 async function assembleReport(cat: string, msg: string, includeDiag: boolean): Promise<string> {
   const category = CATEGORIES.find((c) => c.key === cat) ?? CATEGORIES[0];
-  const header = `${category.emoji} ${category.label()}`;
-  const diag = includeDiag ? `\n\n— ${t('Geräte-Infos')} —\n${await diagnostics()}` : '';
-  return `${header}\n\n${msg.trim()}${diag}`;
+  const head = `${category.emoji}  ${category.label()}\n${RULE}`;
+  const body = msg.trim();
+  if (!includeDiag) return `${head}\n\n${body}`;
+  return `${head}\n\n${body}\n\n${RULE}\n${await diagnostics()}`;
 }
 
 export function BugReport({
