@@ -1,6 +1,6 @@
 {
   "name": "skytale",
-  "version": "0.38.2",
+  "version": "0.38.3",
   "description": "Ende-zu-Ende verschlüsselter Messenger als PWA — gegen Massenüberwachung.",
   "type": "module",
   "private": true,

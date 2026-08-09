@@ -1001,6 +1001,22 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
   const [viewOnce, setViewOnce] = useState<{ blob: Blob; mime: string } | null>(null); // the currently-open view-once media (already wiped from storage)
   const [notifOn, setNotifOn] = useState(false);
   const [notifBusy, setNotifBusy] = useState(false);
+  // Mirror the browser's notification permission so the settings row can react to a
+  // hard 'denied': iOS never shows the prompt again once the user tapped "Don't
+  // allow", so a plain toggle would silently dead-end. We steer to a how-to instead.
+  const [notifPerm, setNotifPerm] = useState<NotificationPermission | null>(() =>
+    typeof Notification !== 'undefined' ? Notification.permission : null,
+  );
+  const [notifHelp, setNotifHelp] = useState(false);
+  useEffect(() => {
+    // Re-read on return-to-foreground: if the user re-allowed in the OS settings, the
+    // row should recover (toggle usable again) without needing a reload.
+    const refresh = () => {
+      if (typeof Notification !== 'undefined') setNotifPerm(Notification.permission);
+    };
+    document.addEventListener('visibilitychange', refresh);
+    return () => document.removeEventListener('visibilitychange', refresh);
+  }, []);
   const [qrFull, setQrFull] = useState(false); // own QR blown up full-screen for scanning
   const [cropFile, setCropFile] = useState<File | null>(null); // avatar being cropped
   const [stickerFile, setStickerFile] = useState<File | null>(null); // image becoming a sticker
@@ -8319,6 +8335,9 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
       setError('Benachrichtigungen fehlgeschlagen: ' + (e as Error).message);
     } finally {
       setNotifBusy(false);
+      // Reflect the outcome immediately — after a "Don't allow" the permission is now
+      // 'denied', which flips the row to its how-to affordance instead of a dead toggle.
+      if (typeof Notification !== 'undefined') setNotifPerm(Notification.permission);
     }
   }
 
@@ -10709,17 +10728,29 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
             {pushSupported() && (
               <button
                 className="setting-row"
-                onClick={() => launchRuntimeOperation(() => togglePush())}
+                onClick={() =>
+                  notifPerm === 'denied'
+                    ? setNotifHelp(true)
+                    : launchRuntimeOperation(() => togglePush())
+                }
                 disabled={notifBusy}
               >
                 <span className="setting-ic"><IconBell /></span>
                 <span className="setting-tx">
                   <span className="setting-title">{t('Benachrichtigungen')}</span>
-                  <span className="setting-sub">{t('Inhaltloses Wecksignal — nie Absender oder Text')}</span>
+                  <span className="setting-sub">
+                    {notifPerm === 'denied'
+                      ? t('Blockiert — tippen zum Wiederaktivieren')
+                      : t('Inhaltloses Wecksignal — nie Absender oder Text')}
+                  </span>
                 </span>
-                <span className={`switch${notifOn ? ' on' : ''}`}>
-                  <span className="knob" />
-                </span>
+                {notifPerm === 'denied' ? (
+                  <span className="setting-go"><IconChevron /></span>
+                ) : (
+                  <span className={`switch${notifOn ? ' on' : ''}`}>
+                    <span className="knob" />
+                  </span>
+                )}
               </button>
             )}
 
@@ -10802,6 +10833,24 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
               onImportFailed={resumeAfterFailedRestore}
               runRuntimeOperation={runRuntimeOperation}
             />
+          )}
+          {notifHelp && (
+            <div className="crop-modal" role="dialog" aria-label={t('Benachrichtigungen')}>
+              <div className="crop-head">{t('Benachrichtigungen')}</div>
+              <div className="backup-body">
+                <p className="backup-hint" style={{ textAlign: 'left', marginTop: 0 }}>
+                  {t('Du hast Benachrichtigungen abgelehnt. Der Browser fragt nicht noch einmal — du musst sie in den Geräte-Einstellungen wieder erlauben.')}
+                </p>
+                <p className="backup-hint" style={{ textAlign: 'left' }}>
+                  {t('Auf dem iPhone: Einstellungen öffnen → nach unten zu SKYTALE scrollen → „Mitteilungen“ → „Mitteilungen erlauben“ aktivieren. Danach hierher zurückkommen — der Schalter ist dann wieder frei.')}
+                </p>
+              </div>
+              <div className="crop-actions">
+                <button className="btn btn-primary" onClick={() => setNotifHelp(false)}>
+                  {t('Verstanden')}
+                </button>
+              </div>
+            </div>
           )}
           {bioEnroll && (
             <BiometricEnroll
