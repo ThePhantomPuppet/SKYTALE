@@ -5946,7 +5946,22 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
       }
       const marker = await getRecvMarker(dek, tid);
       assertMessengerActive();
-      if (marker && Date.now() - marker.ts > RECV_TTL_MS) {
+      // A marker is only "live" if it parses AND carries the quota-owner fields the
+      // per-contact reservation needs (roomId/automatic/size/ts) AND isn't past the TTL.
+      // Anything else — an unparseable record, a legacy/malformed marker missing those
+      // fields, or a stale transfer — makes automaticRecvReservationBytes fail CLOSED to
+      // MAX_SAFE_INTEGER, which then blocks EVERY future inbound attachment on this device
+      // (a single leftover marker → "not saved" for all files). Drop it and its partial
+      // chunks; a genuine in-flight transfer simply re-reserves on its next chunk.
+      const live =
+        !!marker &&
+        typeof marker.ts === 'number' &&
+        Number.isFinite(marker.ts) &&
+        typeof marker.roomId === 'string' &&
+        typeof marker.automatic === 'boolean' &&
+        Number.isSafeInteger(marker.size) &&
+        Date.now() - marker.ts <= RECV_TTL_MS;
+      if (!live) {
         await clearRecvMarker(tid);
         assertMessengerActive();
         await secureWipeAttachment(tid);

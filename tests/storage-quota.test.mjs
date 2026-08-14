@@ -199,5 +199,27 @@ ok('originCanReserve bleibt konservativ (nur große Auto-Downloads): unbekanntes
   !reserveSource.includes('return smallWrite') &&
   !reserveSource.includes('requestedBytes <= (estimate?.quota'));
 
+// A SINGLE malformed/legacy recv marker (missing roomId/automatic) makes the per-contact
+// reservation fail CLOSED to MAX_SAFE_INTEGER — for EVERY room — which blocks every inbound
+// attachment with the "not saved" placeholder. This is the fail-closed the boot sweep must
+// clear by dropping such markers.
+ok('malformter/legacy Recv-Marker vergiftet den Cap (MAX_SAFE_INTEGER) für ALLE Räume',
+  S.automaticRecvReservationBytes([{ size: 10, receivedBytes: 0 }], 'room') === Number.MAX_SAFE_INTEGER &&
+  S.automaticRecvReservationBytes([null], 'room') === Number.MAX_SAFE_INTEGER &&
+  // Negativkontrolle: ein wohlgeformter Marker eines ANDEREN Raums vergiftet NICHT
+  S.automaticRecvReservationBytes([{ size: 10, receivedBytes: 0, roomId: 'other', automatic: true }], 'room') === 0);
+
+const sweepSource = messengerSource.slice(
+  messengerSource.indexOf('async function sweepOrphanAttachments'),
+  messengerSource.indexOf('async function sweepOrphanAttachments') + 3200,
+);
+ok('Boot-Sweep entfernt unparsebare/malformte/stale Recv-Marker (nicht nur reine TTL)',
+  sweepSource.includes("typeof marker.roomId === 'string'") &&
+  sweepSource.includes("typeof marker.automatic === 'boolean'") &&
+  sweepSource.includes('Number.isSafeInteger(marker.size)') &&
+  sweepSource.includes('Date.now() - marker.ts <= RECV_TTL_MS') &&
+  // Negativkontrolle: die alte reine „> TTL"-Bedingung ist WEG (die malformte/null-Marker durchließ)
+  !sweepSource.includes('marker && Date.now() - marker.ts > RECV_TTL_MS'));
+
 console.log(`\n${pass} ok, ${fail} fail`);
 process.exit(fail ? 1 : 0);
