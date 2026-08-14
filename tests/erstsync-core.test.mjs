@@ -66,6 +66,31 @@ const decoded = await S.unframeContent(withUnknown);
 ok('unbekanntes part.t wird übersprungen, profile bleibt erhalten (forward-compat)',
   decoded.parts.length === 1 && decoded.parts[0].t === 'profile' && decoded.parts[0].name === 'Nur ich');
 
+// ── A2. avatars-Part: Roundtrip + defensive Decode-Grenzen ────────────────────
+console.log('\n[A2) avatars-Part — Kontakt-Avatare im Bootstrap]');
+const avM = mkMaster();
+const avPayload = 'QUJDREVG'; // beliebiger nicht-leerer String (avatarB64)
+const avRt = (bid, avatars) => S.frameContent({ kind: 'bootstrap', bid, parts: [{ t: 'avatars', avatars }] }).then(S.unframeContent);
+const avPart = (b) => b.parts.find((p) => p.t === 'avatars');
+
+const avBack = await avRt('av01', [{ pm: new Uint8Array(avM.publicKey), av: avPayload }]);
+ok('Roundtrip: avatars-Part, pm byteident + av erhalten',
+  !!avPart(avBack) && avPart(avBack).avatars.length === 1 &&
+  eqh(avPart(avBack).avatars[0].pm, avM.publicKey) && avPart(avBack).avatars[0].av === avPayload);
+// NEGATIVKONTROLLE: ein abweichender av würde die Assertion kippen.
+ok('Negativkontrolle: ein anderer av-Wert wäre NICHT gleich', avPart(avBack).avatars[0].av !== avPayload + 'x');
+
+// Über-großer Avatar wird beim Decode verworfen (nie leer/roh importiert).
+const overCap = await avRt('av02', [{ pm: new Uint8Array(avM.publicKey), av: 'A'.repeat(S.BOOTSTRAP_AVATAR_WIRE_MAX + 1) }]);
+ok('über-großer Avatar wird beim Decode verworfen', avPart(overCap).avatars.length === 0);
+// NEGATIVKONTROLLE: exakt auf der Grenze bleibt er erhalten.
+const atCap = await avRt('av03', [{ pm: new Uint8Array(avM.publicKey), av: 'A'.repeat(S.BOOTSTRAP_AVATAR_WIRE_MAX) }]);
+ok('Negativkontrolle: Avatar exakt auf der Grenze bleibt erhalten', avPart(atCap).avatars.length === 1);
+
+// pm mit falscher Länge (≠32) wird verworfen — der Empfänger derived roomId aus pm.
+const badPm = await avRt('av04', [{ pm: new Uint8Array(31), av: 'QUJD' }]);
+ok('pm mit falscher Länge (≠32) wird verworfen', avPart(badPm).avatars.length === 0);
+
 // ── C. mergeRosterEntry — die harten Regeln ───────────────────────────────────
 console.log('\n[C) mergeRosterEntry: kein Klon, verified nie blind, Merge füllt nur Lücken]');
 const myMasterKp = mkMaster();

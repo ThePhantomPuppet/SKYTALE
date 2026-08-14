@@ -817,6 +817,7 @@ export interface BootstrapGroupTombstone {
 export type BootstrapPart =
   | { t: 'profile'; name?: string; avatar?: string } // avatar = avatarB64 (JPEG)
   | { t: 'roster'; contacts: RosterEntry[] }
+  | { t: 'avatars'; avatars: BootstrapAvatar[] } // contact avatars, gap-filled on the new device
   | { t: 'groups'; groups: GroupInvite[] }
   | { t: 'gtombstones'; tombstones: BootstrapGroupTombstone[] }
   | { t: 'history'; pm: Bytes; idx: number; total: number; msgs: HistoryMessage[] }
@@ -872,6 +873,22 @@ export interface RosterEntry {
   // peer-master signature + epoch (applyDeviceListUpdate) before adopting it.
   dl?: Bytes | null;
 }
+
+/**
+ * A contact's avatar as carried in a bootstrap, keyed by peerMasterPub (the receiver
+ * matches the contact + derives its roomId LOCALLY, exactly like a roster entry).
+ * Sent in SEPARATE byte-budgeted frames from the roster, so a large avatar can never
+ * bloat the single unchunked roster frame past the relay cap. Gap-filled on apply:
+ * an avatar the device already learned live is never overwritten. This is my OWN
+ * avatar copy of what the peer already shared with this account — no new exposure.
+ */
+export interface BootstrapAvatar {
+  pm: Bytes; // peerMasterPub
+  av: string; // avatarB64 (JPEG)
+}
+
+/** Defensive per-avatar ceiling when decoding a bootstrap avatar frame. */
+export const BOOTSTRAP_AVATAR_WIRE_MAX = 128 * 1024;
 
 /** Message payload framed into the ratchet plaintext. */
 export type MessageContent =
@@ -1118,6 +1135,11 @@ export async function frameContent(c: MessageContent): Promise<Bytes> {
               }
           : p.t === 'done'
             ? { t: 'done', k: p.skipped }
+          : p.t === 'avatars'
+            ? {
+                t: 'avatars',
+                a: p.avatars.map((x) => ({ m: bytesToB64(x.pm), v: x.av })),
+              }
           : {
             t: 'roster',
             c: p.contacts.map((e) => ({
@@ -1335,6 +1357,18 @@ export async function unframeContent(bytes: Bytes): Promise<MessageContent> {
         parts.push({ t: 'gtombstones', tombstones });
       } else if (p.t === 'done') {
         parts.push({ t: 'done', skipped: Number(p.k) || 0 });
+      } else if (p.t === 'avatars' && Array.isArray(p.a)) {
+        // peerMasterPub-keyed; the receiver matches the contact locally. Per-avatar
+        // size is bounded so a manipulated snapshot can't inflate one frame; an
+        // oversized or malformed entry is dropped, never imported empty.
+        const avatars: BootstrapAvatar[] = [];
+        for (const raw of p.a) {
+          if (!raw || typeof raw.v !== 'string' || !raw.v || raw.v.length > BOOTSTRAP_AVATAR_WIRE_MAX) continue;
+          const pm = b64ToBytes(raw.m);
+          if (pm.length !== 32) continue;
+          avatars.push({ pm, av: raw.v });
+        }
+        parts.push({ t: 'avatars', avatars });
       } else if (p.t === 'roster') {
         const rawContacts = (Array.isArray(p.c) ? p.c : []) as Array<{
           m: string;

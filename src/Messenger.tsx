@@ -93,6 +93,7 @@ import {
   computeMasterRoomId,
   type Contact,
   type BootstrapPart,
+  type BootstrapAvatar,
   type RosterEntry,
   type HistoryMessage,
   type MessageContent,
@@ -3462,10 +3463,11 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
     // frame that would break the whole Erst-Sync (audit L3).
     const DL_BUDGET = 500 * 1024;
     let dlUsed = 0;
-    const contacts: RosterEntry[] = [];
-    for (const c of contactsRef.current
+    const rosterContacts = contactsRef.current
       .filter((c) => !c.hidden && !c.staleIdentity && !bytesEqual(c.peerMasterPub, id.master.publicKey))
-      .slice(0, ROSTER_MAX)) {
+      .slice(0, ROSTER_MAX);
+    const contacts: RosterEntry[] = [];
+    for (const c of rosterContacts) {
       let dl: Uint8Array<ArrayBuffer> | null = null;
       if (c.peerDeviceList) {
         const enc = await encodeDeviceList(c.peerDeviceList);
@@ -3490,6 +3492,30 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
       { t: 'roster', contacts },
     ];
     await sendBootstrapFrame(targetSignPub, bid, parts);
+    // Contact avatars ride in SEPARATE byte-budgeted frames (the roster frame is a single
+    // unchunked message under the relay cap). Each frame is independently applicable and
+    // gap-fills on the far side; a contact whose avatar doesn't fit stays an identicon until
+    // it re-gossips — never a dropped or too-large frame that breaks the Erst-Sync.
+    const AVATAR_FRAME_BUDGET = 700 * 1024;
+    let avatarBatch: BootstrapAvatar[] = [];
+    let avatarUsed = 0;
+    let avatarFrame = 0;
+    const flushAvatars = async () => {
+      if (!avatarBatch.length) return;
+      await sendBootstrapFrame(targetSignPub, `${bid}-av-${avatarFrame++}`, [
+        { t: 'avatars', avatars: avatarBatch },
+      ]);
+      avatarBatch = [];
+      avatarUsed = 0;
+    };
+    for (const c of rosterContacts) {
+      const av = c.peerAvatarB64;
+      if (!av || av.length > AVATAR_IMPORT_CAP) continue;
+      if (avatarUsed + av.length > AVATAR_FRAME_BUDGET) await flushAvatars();
+      avatarBatch.push({ pm: c.peerMasterPub, av });
+      avatarUsed += av.length;
+    }
+    await flushAvatars();
     // Replay barriers precede all live group states. A newly linked device must
     // never accept an old retained invitation in the gap before it learns that
     // this account had already been removed or had left.
@@ -3813,6 +3839,21 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
           if (!known) contactsRef.current = [...contactsRef.current, merged];
           else if (!contactsRef.current.includes(merged)) continue;
           await saveContact(dek, merged);
+        }
+      } else if (p.t === 'avatars') {
+        // Gap-fill contact avatars from the snapshot (the roster frame, applied just
+        // before, created the contacts). Never overwrite an avatar this device already
+        // learned live; persist FIRST, then swap the record in RAM — like the roster.
+        for (const a of p.avatars) {
+          if (!a.av || a.av.length > AVATAR_IMPORT_CAP) continue;
+          const existing = contactsRef.current.find((c) => bytesEqual(c.peerMasterPub, a.pm));
+          if (!existing || existing.peerAvatarB64) continue; // no such contact yet, or already set
+          const updated = { ...existing, peerAvatarB64: a.av };
+          await saveContact(dek, updated);
+          const cur = contactsRef.current;
+          const at = cur.indexOf(existing);
+          if (at < 0) continue; // record changed under the await — skip, a later sync retries
+          contactsRef.current = [...cur.slice(0, at), updated, ...cur.slice(at + 1)];
         }
       }
     }
