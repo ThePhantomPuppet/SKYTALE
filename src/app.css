@@ -510,6 +510,24 @@ html.privacy-curtain-on .privacy-curtain {
   color: var(--verified);
   flex: none;
 }
+/* One-time notice of what the initial device-link sync left out (issue #11). */
+.sync-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 12px 0;
+  padding: 9px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  font-size: 12.5px;
+  line-height: 1.35;
+  flex: none;
+}
+.sync-note .linklike {
+  flex: none;
+}
 .conv-scroll {
   flex: 1;
   min-height: 0;

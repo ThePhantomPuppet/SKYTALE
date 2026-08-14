@@ -1220,6 +1220,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
 
   const [langSheet, setLangSheet] = useState(false); // language picker open
   const [bugOpen, setBugOpen] = useState(false); // bug-report modal open
+  const [syncSkipped, setSyncSkipped] = useState(0); // one-time notice: items the Erst-Sync left out
   const [deleteOpen, setDeleteOpen] = useState(false); // account-delete confirmation open
   const [wiping, setWiping] = useState(false); // account wipe in progress
   const [deviceNames, setDeviceNames] = useState<DeviceNames>({}); // b64(signPub) → local name
@@ -1598,6 +1599,19 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
               : sanitizeFilename(m.file.name);
     }
     return { mid: m.mid ?? '', text: text.slice(0, 140), sender: m.sender, mine: !!m.mine };
+  }
+
+  /** Render a reply's quoted preview from the LOCALLY-stored original (by mid) — never
+   *  the incoming wire quote, whose text/author/perspective are attacker-controlled
+   *  (audit LBB-09). Neutral placeholder if we don't hold the original. */
+  function boundQuotePreview(reply: Quote, roomId: string | null): { who: string | null; text: string } {
+    const room = roomId ? messagesRef.current[roomId] : undefined;
+    const original = reply.mid && room ? room.find((m) => m.mid === reply.mid) : undefined;
+    if (original) {
+      const q = quoteFrom(original);
+      return { who: q.mine ? t('Du') : q.sender ?? null, text: q.text || '📎 Anhang' };
+    }
+    return { who: null, text: t('Zitat nicht verfügbar') };
   }
 
   /** Build the display message for an inbound `reply` frame (quote + inner text/file). */
@@ -2736,7 +2750,9 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
   function markStatus(id: string | null, status: 'sent' | 'failed', errorMsg?: string) {
     if (!lifecycleActiveRef.current || runtimeSuspendedRef.current) return;
     if (!id) {
-      if (status === 'failed' && errorMsg) setError(errorMsg);
+      // A nack with no mid can't be mapped to a bubble, so raising the global banner
+      // would contradict a message that actually reached a device. The per-delivery
+      // status is the source of truth (issue #5 edge 1).
       return;
     }
     const expectedEarlyReceipt = ackTimers.current.has(id);
@@ -3828,7 +3844,10 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
           messagesRef.current[room] = next;
         });
       } else if (p.t === 'done') {
-        if (p.skipped > 0) console.info(`[erst-sync] ${p.skipped} Nachrichten nicht übertragen (Anhänge / ohne mid).`);
+        if (p.skipped > 0) {
+          console.info(`[erst-sync] ${p.skipped} Nachrichten nicht übertragen (Anhänge / ohne mid).`);
+          setSyncSkipped(p.skipped); // surfaced as a one-time dismissible notice in the list
+        }
       } else if (p.t === 'roster') {
         for (const entry of p.contacts) {
           const merged = await mergeRosterEntry(contactsRef.current, entry, myMaster, retiredMastersRef.current);
@@ -3879,6 +3898,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
       const arr = messagesRef.current[contact.roomId];
       if (!arr) return;
       let changed = false;
+      let reconciled = false;
       const next = arr.map((message) => {
         const deliveries = message.deliveries;
         if (!deliveries) return message;
@@ -3897,6 +3917,15 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
           }
           return delivery;
         });
+        if (
+          messageChanged &&
+          aggregateDelivery(deliveries).label === 'failed' &&
+          aggregateDelivery(updated).label !== 'failed'
+        ) {
+          // Sweeping the revoked device delivered the message after all — retract a
+          // global "not delivered" banner the ack-timeout may have raised (issue #5 edge 2).
+          reconciled = true;
+        }
         return messageChanged
           ? { ...message, deliveries: updated }
           : message;
@@ -3904,6 +3933,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
       if (!changed) return;
       await saveMessages(dek, contact.roomId, next);
       messagesRef.current[contact.roomId] = next;
+      if (reconciled) setError('');
       commitMessages();
       bump();
     });
@@ -9480,6 +9510,13 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
         </label>
       </div>
 
+      {syncSkipped > 0 && (
+        <div className="sync-note" role="status">
+          <span>{t('Beim Koppeln wurden {n} ältere Anhänge/Nachrichten nicht mit übertragen.', { n: syncSkipped })}</span>
+          <button type="button" className="linklike" onClick={() => setSyncSkipped(0)}>{t('Verstanden')}</button>
+        </div>
+      )}
+
       <div className="enc-line">
         <IconShield size={13} />
         {t('Alle Nachrichten Ende-zu-Ende verschlüsselt')}
@@ -9760,17 +9797,20 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
                 <span className="recalled">{t('Nachricht zurückgerufen')}</span>
               ) : (
                 <>
-                  {m.reply && (
-                    <div
-                      className="bubble-quote"
-                      role="button"
-                      title="Zur Nachricht springen"
-                      onClick={() => scrollToQuoted(m.reply?.mid)}
-                    >
-                      {(m.reply.mine || m.reply.sender) && <span className="bq-who">{m.reply.mine ? 'Du' : m.reply.sender}</span>}
-                      <span className="bq-text">{m.reply.text || '📎 Anhang'}</span>
-                    </div>
-                  )}
+                  {m.reply && (() => {
+                    const bq = boundQuotePreview(m.reply, activeRoom);
+                    return (
+                      <div
+                        className="bubble-quote"
+                        role="button"
+                        title="Zur Nachricht springen"
+                        onClick={() => scrollToQuoted(m.reply?.mid)}
+                      >
+                        {bq.who && <span className="bq-who">{bq.who}</span>}
+                        <span className="bq-text">{bq.text}</span>
+                      </div>
+                    );
+                  })()}
                   {m.file ? (
                     m.file.r2 && !m.file.attId ? (
                       <button
@@ -9975,17 +10015,20 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
                 <span className="recalled">{t('Nachricht zurückgerufen')}</span>
               ) : (
                 <>
-                  {m.reply && (
-                    <div
-                      className="bubble-quote"
-                      role="button"
-                      title="Zur Nachricht springen"
-                      onClick={() => scrollToQuoted(m.reply?.mid)}
-                    >
-                      {(m.reply.mine || m.reply.sender) && <span className="bq-who">{m.reply.mine ? 'Du' : m.reply.sender}</span>}
-                      <span className="bq-text">{m.reply.text || '📎 Anhang'}</span>
-                    </div>
-                  )}
+                  {m.reply && (() => {
+                    const bq = boundQuotePreview(m.reply, activeGroup);
+                    return (
+                      <div
+                        className="bubble-quote"
+                        role="button"
+                        title="Zur Nachricht springen"
+                        onClick={() => scrollToQuoted(m.reply?.mid)}
+                      >
+                        {bq.who && <span className="bq-who">{bq.who}</span>}
+                        <span className="bq-text">{bq.text}</span>
+                      </div>
+                    );
+                  })()}
                   {m.file ? (
                     <Attachment
                       dek={dek}

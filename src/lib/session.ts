@@ -1409,7 +1409,17 @@ export async function unframeContent(bytes: Bytes): Promise<MessageContent> {
   // profile update must not surface as a downloadable attachment).
   if (bytes[0] === 13) {
     const j = JSON.parse(utf8.decode(bytes.slice(1)));
-    return { kind: 'reply', quote: j.q as Quote, inner: await unframeContent(b64ToBytes(j.i)) };
+    // The quote is attacker-controlled and only a POINTER (mid) plus a fallback preview:
+    // the receiver rebinds text/author/perspective from its own stored original at render
+    // (audit LBB-09). Still bound the fields on decode so a hostile frame can't bloat storage.
+    const rq = (j.q && typeof j.q === 'object' ? j.q : {}) as Record<string, unknown>;
+    const quote: Quote = {
+      mid: typeof rq.mid === 'string' ? rq.mid.slice(0, 128) : '',
+      text: typeof rq.text === 'string' ? rq.text.slice(0, 280) : '',
+      sender: typeof rq.sender === 'string' ? rq.sender.slice(0, 128) : undefined,
+      mine: rq.mine === true,
+    };
+    return { kind: 'reply', quote, inner: await unframeContent(b64ToBytes(j.i)) };
   }
   if (bytes[0] === 14) {
     const hlen = dv.getUint32(1);
