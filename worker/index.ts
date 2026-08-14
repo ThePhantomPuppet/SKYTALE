@@ -84,6 +84,17 @@ const OFFICIAL_ACCOUNT_PATH = `/api/official-accounts/${OFFICIAL_ACCOUNT_ROUTE_A
 // held to the same HTTPS/header policy as the custom domain.
 const PROD_HOSTS = new Set(['skytale.chat', 'scytale.illogical.workers.dev']);
 
+// RFC 9116 disclosure pointer. Reports go through GitHub's private advisory flow, so
+// there is no e-mail surface to spoof (see the mail-domain hardening note). Bump the
+// Expires date on each review so the file never reads as stale.
+const SECURITY_TXT = [
+  'Contact: https://github.com/ThePhantomPuppet/SKYTALE/security/advisories/new',
+  'Expires: 2027-08-14T00:00:00.000Z',
+  'Preferred-Languages: de, en',
+  'Policy: https://github.com/ThePhantomPuppet/SKYTALE/blob/main/SECURITY.md',
+  '',
+].join('\n');
+
 /** Enforce the declared part size against the REAL streamed bytes. The quota
  *  coordinator reserves this exact amount before R2 accepts any data. */
 function exactBody(
@@ -263,6 +274,11 @@ function secureResponse(response: Response, url: URL): Response {
   applySecurityHeaders(headers, url);
   if (url.pathname === '/sw.js' || url.pathname === '/manifest.webmanifest') {
     headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+  }
+  // API responses are dynamic and must never be cached — default to no-store for any
+  // /api/ path that did not set its own directive (covers every error path uniformly).
+  if (url.pathname.startsWith('/api/') && !headers.has('Cache-Control')) {
+    headers.set('Cache-Control', 'no-store');
   }
   return new Response(response.body, {
     status: response.status,
@@ -842,6 +858,20 @@ export default {
         new Response('Method not allowed', { status: 405, headers: { allow: 'GET, POST, PUT' } }),
         url,
       );
+    }
+
+    if (url.pathname === '/.well-known/security.txt') {
+      return secureResponse(
+        new Response(SECURITY_TXT, {
+          headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=86400' },
+        }),
+        url,
+      );
+    }
+    // A real 404 for any unrouted /api/ path — never the cached SPA shell, which would
+    // make API typos and probes look like successful page hits (audit LBB-06).
+    if (url.pathname.startsWith('/api/')) {
+      return jsonResponse({ error: 'not found' }, url, 404);
     }
 
     return secureResponse(await env.ASSETS.fetch(request), url);
