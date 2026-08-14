@@ -603,6 +603,23 @@ html.privacy-curtain-on .privacy-curtain {
 .member-row .conv-name {
   flex: 1;
 }
+/* Member identity: name over a short fingerprint so same-named/nameless members
+   stay distinguishable in the manage dialog (audit LBB-12). */
+.member-row .member-id {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.member-fp {
+  font-size: 11px;
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .member-row .check {
   width: 22px;
   height: 22px;

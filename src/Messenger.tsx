@@ -253,6 +253,7 @@ import {
   base64urlEncode,
 } from './lib/officialAccountManifest';
 import { bytesToB64, b64ToBytes } from './lib/bytes';
+import { sanitizeFilename } from './lib/filename';
 import { compressImage } from './lib/imagecompress';
 import { Identicon } from './Identicon';
 import { QrScanner } from './QrScanner';
@@ -1594,7 +1595,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
             ? 'Video'
             : m.file.mime.startsWith('audio/')
               ? 'Sprachnachricht'
-              : m.file.name;
+              : sanitizeFilename(m.file.name);
     }
     return { mid: m.mid ?? '', text: text.slice(0, 140), sender: m.sender, mine: !!m.mine };
   }
@@ -9782,7 +9783,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
                         }
                       >
                         <IconArchive />
-                        <span className="pull-name">{m.file.name || (m.file.mime.startsWith('video/') ? t('Video') : t('Datei'))}</span>
+                        <span className="pull-name">{sanitizeFilename(m.file.name) || (m.file.mime.startsWith('video/') ? t('Video') : t('Datei'))}</span>
                         <span className="pull-size">
                           {m.mid && downloadingRef.current.has(m.mid)
                             ? `${pullProgressRef.current.get(m.mid) ?? 0} %`
@@ -9821,7 +9822,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
                         }
                       >
                         <IconArchive />
-                        <span className="pull-name">{m.file.name}</span>
+                        <span className="pull-name">{sanitizeFilename(m.file.name) || t('Datei')}</span>
                         <span className="pull-size">
                           {m.file.attId && downloadingRef.current.has(m.file.attId)
                             ? `${pullProgressRef.current.get(m.file.attId) ?? 0} %`
@@ -11156,16 +11157,30 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
                 masterPub,
                 officialAccountTrustRef.current,
               );
+              // Prefer the locally-known contact name + a short fingerprint so two
+              // members never both collapse to a bare "…" the owner can't tell apart
+              // (audit LBB-12). Fall back to the roster name, then the master hash.
+              const memberContact = contactsRef.current.find((c) =>
+                bytesEqual(c.peerMasterPub, masterPub),
+              );
+              const memberFp = memberContact?.peerFingerprint
+                ? shortFp(memberContact.peerFingerprint)
+                : hexOf(masterPub).slice(0, 12);
               const memberName =
                 officialAdmin || revokedOfficialAdmin
                   ? OFFICIAL_ACCOUNT_DISPLAY_NAME
-                  : m.name || '…';
+                  : memberContact
+                    ? displayName(memberContact)
+                    : m.name?.trim() || memberFp;
               return (
                 <div key={i} className="member-row">
                   <div className="avatar sm">
                     <Identicon seed={hexOf(m.dhPub)} />
                   </div>
-                  <span className="conv-name">{memberName}</span>
+                  <span className="member-id">
+                    <span className="conv-name">{memberName}</span>
+                    {memberName !== memberFp && <span className="member-fp">{memberFp}</span>}
+                  </span>
                   {officialAdmin && <OfficialAdminBadge />}
                   {revokedOfficialAdmin && <RevokedOfficialAdminBadge />}
                   {canManage && (
@@ -11173,7 +11188,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
                       className="icon-mini danger"
                       aria-label={t('Entfernen')}
                       onClick={() => {
-                        if (confirm(t('{name} entfernen?', { name: memberName }))) {
+                        if (confirm(t('{name} entfernen?', { name: memberName !== memberFp ? `${memberName} · ${memberFp}` : memberName }))) {
                           launchRuntimeOperation(() =>
                             removeMemberFromGroup(g, m),
                           );

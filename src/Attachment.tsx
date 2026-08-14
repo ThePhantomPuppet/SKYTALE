@@ -11,6 +11,7 @@ import {
 } from './lib/attachments';
 import { isSticker } from './lib/stickers';
 import { mayRenderInlineImage } from './lib/mediaPolicy';
+import { sanitizeFilename } from './lib/filename';
 import { t } from './lib/i18n';
 import type { FileRef } from './lib/messages';
 
@@ -146,7 +147,7 @@ export function Attachment({
             if (!file.attId || !canStream) return;
             setExportError('');
             setState('exporting');
-            void saveAttachmentToDisk(dek, file.attId, file.name)
+            void saveAttachmentToDisk(dek, file.attId, sanitizeFilename(file.name) || 'anhang')
               .catch((error: unknown) => {
                 if (!(error instanceof DOMException && error.name === 'AbortError')) {
                   setExportError(error instanceof Error ? error.message : t('Export fehlgeschlagen.'));
@@ -157,7 +158,7 @@ export function Attachment({
         >
           <IconAttach size={15} />
           <span className="fn">
-            {state === 'exporting' ? t('Anhang wird exportiert…') : file.name}
+            {state === 'exporting' ? t('Anhang wird exportiert…') : sanitizeFilename(file.name) || t('Datei')}
           </span>
         </button>
         {!canStream && (
@@ -191,15 +192,15 @@ export function Attachment({
     return <video className="bubble-video" src={url} controls playsInline preload="metadata" />;
   }
   if (mayRenderInlineImage(file.mime, blob.size)) {
-    return <img className="bubble-img" src={url} alt={file.name} draggable={false} onClick={() => onImageZoom(blob)} />;
+    return <img className="bubble-img" src={url} alt={sanitizeFilename(file.name)} draggable={false} onClick={() => onImageZoom(blob)} />;
   }
   if (file.mime.startsWith('audio/')) {
     return <AudioPlayer blob={blob} mime={file.mime} />;
   }
   return (
-    <button className="file-chip" onClick={() => downloadBlob(blob, file.name)}>
+    <button className="file-chip" onClick={() => downloadBlob(blob, sanitizeFilename(file.name))}>
       <IconAttach size={15} />
-      <span className="fn">{file.name}</span>
+      <span className="fn">{sanitizeFilename(file.name) || t('Datei')}</span>
     </button>
   );
 }

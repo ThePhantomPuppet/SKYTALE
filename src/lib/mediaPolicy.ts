@@ -11,7 +11,16 @@ function bounded(size: number, max: number): boolean {
 }
 
 export function mayRenderInlineImage(mime: string, size: number): boolean {
-  return mime.startsWith('image/') && bounded(size, MAX_INLINE_IMAGE_BYTES);
+  // Raster only. An <img> renders SVG inertly, but keeping image/svg+xml (and any xml
+  // image type) out of the inline sink limits it to safely-decoded bitmap formats
+  // (audit LBB-10 defense-in-depth).
+  const m = mime.toLowerCase();
+  return (
+    m.startsWith('image/') &&
+    !m.includes('svg') &&
+    !m.includes('xml') &&
+    bounded(size, MAX_INLINE_IMAGE_BYTES)
+  );
 }
 
 export function mayAnalyzeAudio(size: number): boolean {
