@@ -176,12 +176,27 @@ ok('kleiner Inline-Write braucht nur das kleine Headroom-Floor, ein großer das 
   S.hasOriginStorageHeadroom(lowFree, 1024, 0, false) === false &&
   // Negativkontrolle: auch ein kleiner Write scheitert, wenn wirklich (fast) voll
   S.hasOriginStorageHeadroom(nearlyFull, 1024, 0, true) === false);
-ok('Inline-Empfang wendet den Per-Kontakt-Cap IMMER an und markiert nur kleine Writes',
+ok('Inline-Empfang wendet den Per-Kontakt-Cap IMMER an; die (schon im RAM liegenden) Inline-Daten nutzen den relaxten Floor',
   inboundSource.includes('mayAutoReceiveAttachment(') &&
-  inboundSource.includes('data.length <= ALWAYS_RECEIVE_INLINE_BYTES') &&
+  inboundSource.includes('const smallWrite = true') &&
   inboundSource.includes('originCanReserve(data.length, smallWrite)') &&
   // Negativkontrolle: der Cap steht NICHT hinter einer Größen-Bedingung (immer aktiv)
-  !inboundSource.includes('if (data.length > ALWAYS_RECEIVE_INLINE_BYTES)'));
+  !inboundSource.includes('if (data.length > ALWAYS_RECEIVE_INLINE_BYTES)') &&
+  // Negativkontrolle: das alte 256-KB-Gate ist WEG (256 KB–600 KB verlangte sonst 64 MB frei)
+  !inboundSource.includes('data.length <= ALWAYS_RECEIVE_INLINE_BYTES'));
+
+const reserveSource = messengerSource.slice(
+  messengerSource.indexOf('async function originCanReserve'),
+  messengerSource.indexOf('function markRecvDropped'),
+);
+ok('Fehlendes/kaputtes Storage-Estimate verwirft inline empfangene Daten NICHT (akzeptiert nur bei smallWrite)',
+  reserveSource.includes('if (!navigator.storage?.estimate) return smallWrite;') &&
+  reserveSource.includes('smallWrite &&') &&
+  reserveSource.includes('estimate.quota > 0') &&
+  // Negativkontrolle: die Estimate-Wege geben `smallWrite` zurück, nicht pauschal `true`
+  // (ein großer Auto-Download bei unbekanntem Headroom bleibt so konservativ abgelehnt).
+  !reserveSource.includes('storage?.estimate) return true') &&
+  reserveSource.includes('} catch {\n      return smallWrite;'));
 
 console.log(`\n${pass} ok, ${fail} fail`);
 process.exit(fail ? 1 : 0);

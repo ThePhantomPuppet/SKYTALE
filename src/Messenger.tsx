@@ -268,7 +268,6 @@ import { applyBadge } from './lib/badge';
 import { biometricAvailable, biometricEnrolled, disableBiometricUnlock, duressEnabled, openDecoyForPopulate, WrongPassphraseError } from './lib/vaultService';
 import { DuressSetup } from './DuressSetup';
 import {
-  ALWAYS_RECEIVE_INLINE_BYTES,
   AUTO_RECEIVE_CONTACT_CAP_BYTES,
   attachmentRecvReservationBytes,
   automaticRecvReservationBytes,
@@ -1487,7 +1486,10 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
   }
 
   async function originCanReserve(requestedBytes: number, smallWrite = false): Promise<boolean> {
-    if (!navigator.storage?.estimate) return false;
+    // A small inline payload is already fully in RAM and bounded by the per-contact cap,
+    // so an unavailable or broken storage estimate (iOS is flaky here) must NOT discard it —
+    // accept. Only large auto-downloads stay conservative (reject when headroom is unknown).
+    if (!navigator.storage?.estimate) return smallWrite;
     let estimate: StorageEstimate | null;
     let markerIds: string[];
     try {
@@ -1496,7 +1498,13 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
         allRecvMarkerIds(),
       ]);
     } catch {
-      return false;
+      return smallWrite;
+    }
+    if (
+      smallWrite &&
+      !(typeof estimate?.usage === 'number' && typeof estimate?.quota === 'number' && estimate.quota > 0)
+    ) {
+      return true;
     }
     const markers = await Promise.all(markerIds.map((id) => getRecvMarker(dek, id).catch(() => null)));
     let volatileReservations = 0;
@@ -1556,10 +1564,11 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
     }
     return withStorageGate(async () => {
       // The per-contact cap always applies (a peer must not fill the device with
-      // small files). A small inline payload is already in RAM, so it only needs a
-      // relaxed device-headroom floor instead of the large auto-download reserve —
-      // that reserve used to dead-end a ~1 KB file when the device was low on space.
-      const smallWrite = data.length <= ALWAYS_RECEIVE_INLINE_BYTES;
+      // small files). Every payload here is an inline attachment (≤ MAX_ATTACH, checked
+      // above) that is ALREADY fully in RAM, so it only needs the relaxed device-headroom
+      // floor — never the large auto-download reserve. Gating the 256 KB–600 KB band on
+      // that 64 MB reserve dead-ended real files (e.g. an HTML page) on a low-space device.
+      const smallWrite = true;
       const markerIds = await allRecvMarkerIds();
       const activeMarkers = await Promise.all(
         markerIds.map((id) => getRecvMarker(dek, id).catch(() => null)),
