@@ -181,7 +181,7 @@ ok('Inline-Empfang: Per-Kontakt-Cap gilt IMMER; die Estimate-Vorprüfung entfäl
   // Inline pre-gatet NICHT mehr auf das (auf iOS unzuverlässige) Storage-Estimate …
   !inboundSource.includes('originCanReserve(') &&
   // … sondern versucht den echten Write und fängt nur ein WIRKLICHES Storage-Full ab
-  inboundSource.includes('if (isStorageFull(error)) return null;') &&
+  inboundSource.includes('if (isStorageFull(error))') &&
   // Negativkontrolle: der Cap steht NICHT hinter einer Größen-Bedingung (immer aktiv)
   !inboundSource.includes('if (data.length > ALWAYS_RECEIVE_INLINE_BYTES)') &&
   // Negativkontrolle: das alte 256-KB-Gate ist WEG

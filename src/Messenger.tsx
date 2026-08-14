@@ -295,6 +295,8 @@ import {
 } from './icons';
 
 const MAX_ATTACH = 600 * 1024; // inline cap — keeps the WS frame under Cloudflare's ~1 MiB limit
+// Diagnostic breadcrumb: which admission branch last dropped an inbound inline attachment.
+let lastInboundReject: 'size' | 'cap' | 'full' = 'cap';
 const COMPOSER_MAX_HEIGHT = 140; // px — composer grows to ~6 lines, then scrolls (mirrors app.css)
 // Chunked attachments. Auto-push path: a file above the inline cap and up to
 // AUTOPUSH_CAP is sent as chunk frames straight to the peer's mailbox (works offline);
@@ -1560,7 +1562,10 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
     data: Uint8Array,
     viewOnce?: boolean,
   ): Promise<FileRef | null> {
-    if (!Number.isSafeInteger(data.length) || data.length < 0 || data.length > MAX_ATTACH) return null;
+    if (!Number.isSafeInteger(data.length) || data.length < 0 || data.length > MAX_ATTACH) {
+      lastInboundReject = 'size';
+      return null;
+    }
     if (messagesRef.current[roomId] === undefined) {
       messagesRef.current[roomId] = await loadMessages(dek, roomId);
     }
@@ -1583,15 +1588,29 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
           automaticRecvReservationBytes(activeMarkers, roomId),
         )
       ) {
+        lastInboundReject = 'cap';
         return null;
       }
       try {
         return await fileRefFor(name, mime, data, viewOnce);
       } catch (error) {
-        if (isStorageFull(error)) return null;
+        if (isStorageFull(error)) {
+          lastInboundReject = 'full';
+          return null;
+        }
         throw error;
       }
     });
+  }
+
+  /** Placeholder text for a dropped inbound attachment, naming WHICH admission branch
+   *  refused it (temporary diagnostic detail while we chase an iOS-only drop). */
+  function inboundRejectText(): string {
+    return lastInboundReject === 'size'
+      ? t('Anhang nicht gespeichert (zu groß).')
+      : lastInboundReject === 'full'
+        ? t('Anhang nicht gespeichert (Gerätespeicher voll).')
+        : t('Anhang nicht gespeichert (Kontakt-Speicherlimit).');
   }
 
   /** A self-contained quote of a message, for the reply preview + the sent frame. */
@@ -1640,7 +1659,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
         : await fileRefFor(inner.name, inner.mime, inner.data);
       return file
         ? { ...base, file }
-        : { ...base, text: t('Anhang wegen des automatischen Speicherlimits nicht gespeichert.') };
+        : { ...base, text: inboundRejectText() };
     }
     return { ...base, text: '' };
   }
@@ -5016,7 +5035,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
                   mine: content.origin === 'sent',
                   ts: content.ts,
                   mid: content.innerMid,
-                  text: t('Anhang wegen des automatischen Speicherlimits nicht gespeichert.'),
+                  text: inboundRejectText(),
                 };
           } else if (inner.kind === 'reply') {
             synced = await replyMessage(
@@ -5156,7 +5175,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
                 mine: false,
                 ts: Date.now(),
                 mid,
-                text: t('Anhang wegen des automatischen Speicherlimits nicht gespeichert.'),
+                text: inboundRejectText(),
               };
         } else if (content.kind === 'reply') {
           inMsg = await replyMessage(content.quote, content.inner, mid, false, contact.roomId);
@@ -7185,7 +7204,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
               ts: Date.now(),
               mid,
               sender,
-              text: t('Anhang wegen des automatischen Speicherlimits nicht gespeichert.'),
+              text: inboundRejectText(),
             };
       }
       return null;
@@ -7341,7 +7360,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
             mine: true,
             ts: content.ts,
             mid: content.innerMid,
-            text: t('Anhang wegen des automatischen Speicherlimits nicht gespeichert.'),
+            text: inboundRejectText(),
           };
     }
     if (message) await appendFreshInboundMessage(group.id, message);
