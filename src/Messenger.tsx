@@ -1018,6 +1018,14 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
     document.addEventListener('visibilitychange', refresh);
     return () => document.removeEventListener('visibilitychange', refresh);
   }, []);
+  useEffect(() => {
+    // iOS gives an INSTALLED PWA only a small, evictable storage quota by default. With a busy
+    // origin (the real vault plus the duress decoy's seeded chats) that quota fills, so a
+    // genuine QuotaExceeded then makes a received attachment show the "not saved" placeholder —
+    // while the same account on desktop (large default quota) stores it fine. Requesting
+    // persistent storage lifts the quota (auto-granted for home-screen PWAs). Best-effort.
+    void navigator.storage?.persist?.().catch(() => undefined);
+  }, []);
   const [qrFull, setQrFull] = useState(false); // own QR blown up full-screen for scanning
   const [linkQrFull, setLinkQrFull] = useState(false); // pairing QR blown up full-screen
   const [cropFile, setCropFile] = useState<File | null>(null); // avatar being cropped
