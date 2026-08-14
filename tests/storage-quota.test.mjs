@@ -189,14 +189,17 @@ const reserveSource = messengerSource.slice(
   messengerSource.indexOf('async function originCanReserve'),
   messengerSource.indexOf('function markRecvDropped'),
 );
-ok('Fehlendes/kaputtes Storage-Estimate verwirft inline empfangene Daten NICHT (akzeptiert nur bei smallWrite)',
+ok('Inline empfangene Daten werden angenommen, sobald sie physisch passen; kaputtes/fehlendes Estimate verwirft sie nicht',
   reserveSource.includes('if (!navigator.storage?.estimate) return smallWrite;') &&
-  reserveSource.includes('smallWrite &&') &&
   reserveSource.includes('estimate.quota > 0') &&
+  // accept-if-fits für Inline: kein 2-MB-Floor, kein Auto-Download-Reserve
+  reserveSource.includes('return requestedBytes <= (estimate?.quota ?? 0) - (estimate?.usage ?? 0);') &&
   // Negativkontrolle: die Estimate-Wege geben `smallWrite` zurück, nicht pauschal `true`
   // (ein großer Auto-Download bei unbekanntem Headroom bleibt so konservativ abgelehnt).
   !reserveSource.includes('storage?.estimate) return true') &&
-  reserveSource.includes('} catch {\n      return smallWrite;'));
+  reserveSource.includes('} catch {\n      return smallWrite;') &&
+  // Negativkontrolle: der große Pfad nutzt weiter das volle Headroom (hasOriginStorageHeadroom)
+  reserveSource.includes('hasOriginStorageHeadroom(estimate, requestedBytes, reserved, smallWrite)'));
 
 console.log(`\n${pass} ok, ${fail} fail`);
 process.exit(fail ? 1 : 0);

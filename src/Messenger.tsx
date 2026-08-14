@@ -1506,6 +1506,14 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
     ) {
       return true;
     }
+    if (smallWrite) {
+      // The estimate is valid here. Accept the inline payload whenever it PHYSICALLY fits:
+      // it is already in RAM, so the auto-download reserve and the 2 MB floor don't apply —
+      // those guard large future downloads, not this received file. iOS reports a tight,
+      // near-full PWA quota that the floor+reserve wrongly turned into a dropped attachment.
+      // The per-contact cap (checked at the call site) remains the abuse bound.
+      return requestedBytes <= (estimate?.quota ?? 0) - (estimate?.usage ?? 0);
+    }
     const markers = await Promise.all(markerIds.map((id) => getRecvMarker(dek, id).catch(() => null)));
     let volatileReservations = 0;
     for (const bytes of r2ReservationsRef.current.values()) {
