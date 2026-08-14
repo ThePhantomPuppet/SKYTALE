@@ -1486,10 +1486,10 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
   }
 
   async function originCanReserve(requestedBytes: number, smallWrite = false): Promise<boolean> {
-    // A small inline payload is already fully in RAM and bounded by the per-contact cap,
-    // so an unavailable or broken storage estimate (iOS is flaky here) must NOT discard it —
-    // accept. Only large auto-downloads stay conservative (reject when headroom is unknown).
-    if (!navigator.storage?.estimate) return smallWrite;
+    // Conservative device-headroom check for LARGE auto-downloads (its only caller now —
+    // inline receive relies on the actual write instead). If the estimate is unavailable or
+    // fails, refuse rather than risk filling the device with a big streamed transfer.
+    if (!navigator.storage?.estimate) return false;
     let estimate: StorageEstimate | null;
     let markerIds: string[];
     try {
@@ -1498,21 +1498,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
         allRecvMarkerIds(),
       ]);
     } catch {
-      return smallWrite;
-    }
-    if (
-      smallWrite &&
-      !(typeof estimate?.usage === 'number' && typeof estimate?.quota === 'number' && estimate.quota > 0)
-    ) {
-      return true;
-    }
-    if (smallWrite) {
-      // The estimate is valid here. Accept the inline payload whenever it PHYSICALLY fits:
-      // it is already in RAM, so the auto-download reserve and the 2 MB floor don't apply —
-      // those guard large future downloads, not this received file. iOS reports a tight,
-      // near-full PWA quota that the floor+reserve wrongly turned into a dropped attachment.
-      // The per-contact cap (checked at the call site) remains the abuse bound.
-      return requestedBytes <= (estimate?.quota ?? 0) - (estimate?.usage ?? 0);
+      return false;
     }
     const markers = await Promise.all(markerIds.map((id) => getRecvMarker(dek, id).catch(() => null)));
     let volatileReservations = 0;
@@ -1571,12 +1557,12 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
       messagesRef.current[roomId] = await loadMessages(dek, roomId);
     }
     return withStorageGate(async () => {
-      // The per-contact cap always applies (a peer must not fill the device with
-      // small files). Every payload here is an inline attachment (≤ MAX_ATTACH, checked
-      // above) that is ALREADY fully in RAM, so it only needs the relaxed device-headroom
-      // floor — never the large auto-download reserve. Gating the 256 KB–600 KB band on
-      // that 64 MB reserve dead-ended real files (e.g. an HTML page) on a low-space device.
-      const smallWrite = true;
+      // The per-contact cap is the abuse bound and ALWAYS applies. Beyond it we do NOT
+      // pre-gate this inline payload on navigator.storage.estimate(): it is already in RAM,
+      // and iOS PWAs report a tight/near-full quota (often usage ≈ quota) that wrongly
+      // discarded real received files. Instead, attempt the write — the catch below turns a
+      // GENUINE storage-full into the explicit placeholder, so the estimate never lies us
+      // out of a file the device could actually hold.
       const markerIds = await allRecvMarkerIds();
       const activeMarkers = await Promise.all(
         markerIds.map((id) => getRecvMarker(dek, id).catch(() => null)),
@@ -1587,8 +1573,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
           data.length,
           AUTO_RECEIVE_CONTACT_CAP_BYTES,
           automaticRecvReservationBytes(activeMarkers, roomId),
-        ) ||
-        !(await originCanReserve(data.length, smallWrite))
+        )
       ) {
         return null;
       }

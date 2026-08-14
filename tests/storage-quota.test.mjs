@@ -176,30 +176,28 @@ ok('kleiner Inline-Write braucht nur das kleine Headroom-Floor, ein großer das 
   S.hasOriginStorageHeadroom(lowFree, 1024, 0, false) === false &&
   // Negativkontrolle: auch ein kleiner Write scheitert, wenn wirklich (fast) voll
   S.hasOriginStorageHeadroom(nearlyFull, 1024, 0, true) === false);
-ok('Inline-Empfang wendet den Per-Kontakt-Cap IMMER an; die (schon im RAM liegenden) Inline-Daten nutzen den relaxten Floor',
+ok('Inline-Empfang: Per-Kontakt-Cap gilt IMMER; die Estimate-Vorprüfung entfällt für Inline (der echte Write entscheidet)',
   inboundSource.includes('mayAutoReceiveAttachment(') &&
-  inboundSource.includes('const smallWrite = true') &&
-  inboundSource.includes('originCanReserve(data.length, smallWrite)') &&
+  // Inline pre-gatet NICHT mehr auf das (auf iOS unzuverlässige) Storage-Estimate …
+  !inboundSource.includes('originCanReserve(') &&
+  // … sondern versucht den echten Write und fängt nur ein WIRKLICHES Storage-Full ab
+  inboundSource.includes('if (isStorageFull(error)) return null;') &&
   // Negativkontrolle: der Cap steht NICHT hinter einer Größen-Bedingung (immer aktiv)
   !inboundSource.includes('if (data.length > ALWAYS_RECEIVE_INLINE_BYTES)') &&
-  // Negativkontrolle: das alte 256-KB-Gate ist WEG (256 KB–600 KB verlangte sonst 64 MB frei)
+  // Negativkontrolle: das alte 256-KB-Gate ist WEG
   !inboundSource.includes('data.length <= ALWAYS_RECEIVE_INLINE_BYTES'));
 
 const reserveSource = messengerSource.slice(
   messengerSource.indexOf('async function originCanReserve'),
   messengerSource.indexOf('function markRecvDropped'),
 );
-ok('Inline empfangene Daten werden angenommen, sobald sie physisch passen; kaputtes/fehlendes Estimate verwirft sie nicht',
-  reserveSource.includes('if (!navigator.storage?.estimate) return smallWrite;') &&
-  reserveSource.includes('estimate.quota > 0') &&
-  // accept-if-fits für Inline: kein 2-MB-Floor, kein Auto-Download-Reserve
-  reserveSource.includes('return requestedBytes <= (estimate?.quota ?? 0) - (estimate?.usage ?? 0);') &&
-  // Negativkontrolle: die Estimate-Wege geben `smallWrite` zurück, nicht pauschal `true`
-  // (ein großer Auto-Download bei unbekanntem Headroom bleibt so konservativ abgelehnt).
-  !reserveSource.includes('storage?.estimate) return true') &&
-  reserveSource.includes('} catch {\n      return smallWrite;') &&
-  // Negativkontrolle: der große Pfad nutzt weiter das volle Headroom (hasOriginStorageHeadroom)
-  reserveSource.includes('hasOriginStorageHeadroom(estimate, requestedBytes, reserved, smallWrite)'));
+ok('originCanReserve bleibt konservativ (nur große Auto-Downloads): unbekanntes Estimate → ablehnen',
+  reserveSource.includes('if (!navigator.storage?.estimate) return false;') &&
+  reserveSource.includes('} catch {\n      return false;') &&
+  reserveSource.includes('hasOriginStorageHeadroom(estimate, requestedBytes, reserved, smallWrite)') &&
+  // Negativkontrolle: keine Inline-Sonderbehandlung mehr (kein accept-if-fits, kein `return smallWrite`)
+  !reserveSource.includes('return smallWrite') &&
+  !reserveSource.includes('requestedBytes <= (estimate?.quota'));
 
 console.log(`\n${pass} ok, ${fail} fail`);
 process.exit(fail ? 1 : 0);
