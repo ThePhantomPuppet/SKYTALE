@@ -2514,6 +2514,14 @@ html.privacy-curtain-on .privacy-curtain {
   height: 100%;
   image-rendering: pixelated;
 }
+/* Tap the pairing QR to blow it up full-screen (like the contact QR). */
+.link-qr.tappable {
+  cursor: pointer;
+  transition: transform 160ms ease-out;
+}
+.link-qr.tappable:active {
+  transform: scale(0.97);
+}
 .link-wait {
   display: flex;
   align-items: center;

@@ -1018,6 +1018,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
     return () => document.removeEventListener('visibilitychange', refresh);
   }, []);
   const [qrFull, setQrFull] = useState(false); // own QR blown up full-screen for scanning
+  const [linkQrFull, setLinkQrFull] = useState(false); // pairing QR blown up full-screen
   const [cropFile, setCropFile] = useState<File | null>(null); // avatar being cropped
   const [stickerFile, setStickerFile] = useState<File | null>(null); // image becoming a sticker
   const [stickers, setStickers] = useState<Sticker[]>([]);
@@ -8957,6 +8958,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
     // reopen the reconstructed SAS without discarding/ACKing protocol state.
     resetLink();
     setLinkView(null);
+    setLinkQrFull(false);
   };
   const linkRole = linkSessionRef.current?.role;
   const linkOverlay = linkView === 'scan' ? (
@@ -9048,7 +9050,21 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
             <p className="link-sub">
               {tb('Öffne auf deinem Hauptgerät **Profil → Gerät koppeln → Neues Gerät hinzufügen** und scanne diesen Code.')}
             </p>
-            <div className="link-qr">{linkQr ? <img src={linkQr} alt={t('Kopplungs-QR')} /> : <span className="ph">…</span>}</div>
+            <div
+              className={`link-qr${linkQr ? ' tappable' : ''}`}
+              role={linkQr ? 'button' : undefined}
+              tabIndex={linkQr ? 0 : undefined}
+              aria-label={linkQr ? t('QR-Code vergrößern') : undefined}
+              onClick={() => linkQr && setLinkQrFull(true)}
+              onKeyDown={(e) => {
+                if (linkQr && (e.key === 'Enter' || e.key === ' ')) {
+                  e.preventDefault();
+                  setLinkQrFull(true);
+                }
+              }}
+            >
+              {linkQr ? <img src={linkQr} alt={t('Kopplungs-QR')} /> : <span className="ph">…</span>}
+            </div>
             <p className="link-wait">
               <span className="rec-dot" /> {t('Warte auf das Hauptgerät…')}
             </p>
@@ -9133,6 +9149,11 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
           </>
         )}
       </div>
+      {linkQrFull && linkQr && linkView === 'qr' && (
+        <div className="qr-full" onClick={() => setLinkQrFull(false)} role="dialog" aria-label={t('QR-Code Vollbild')}>
+          <img src={linkQr} alt={t('Kopplungs-QR')} />
+        </div>
+      )}
     </div>
   ) : null;
 
