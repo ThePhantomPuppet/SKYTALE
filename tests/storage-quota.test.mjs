@@ -125,6 +125,16 @@ ok('Auto-Pull ist ausdrücklich nicht als Nutzer-Pull markiert',
   /void pullAttachment\([\s\S]*?false,\s*\);/.test(messenger));
 ok('R2-Downloads laufen durch dieselbe globale Reservierungsprüfung',
   /downloadR2Message[\s\S]*?originCanReserve\(valid\.size\)[\s\S]*?r2ReservationsRef\.current\.set/.test(messenger));
+ok('iOS-Fallback fuer fehlende Storage-Schaetzung gilt nur fuer kleine Inline-Anhaenge',
+  messenger.includes('allowMissingEstimateForSmallWrite = false') &&
+  messenger.includes('if (!navigator.storage?.estimate) return fallback') &&
+  messenger.includes('return fallback;') &&
+  messenger.includes('!estimateIsUsable && fallback') &&
+  messenger.includes('originCanReserve(data.length, true)') &&
+  messenger.includes('originCanReserve(reservedBytes)') &&
+  messenger.includes('originCanReserve(valid.size)') &&
+  !messenger.includes('originCanReserve(reservedBytes, true)') &&
+  !messenger.includes('originCanReserve(valid.size, true)'));
 ok('Datei, Reply, Self-Sync und Gruppe nutzen das gemeinsame Inline-Admission-Gate',
   messenger.includes('async function inboundFileRefFor') &&
   messenger.includes('await inboundFileRefFor(inboundRoomId') &&

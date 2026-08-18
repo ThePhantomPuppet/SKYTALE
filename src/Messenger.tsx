@@ -1270,8 +1270,13 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
     return run;
   }
 
-  async function originCanReserve(requestedBytes: number): Promise<boolean> {
-    if (!navigator.storage?.estimate) return false;
+  async function originCanReserve(requestedBytes: number, allowMissingEstimateForSmallWrite = false): Promise<boolean> {
+    const fallback =
+      allowMissingEstimateForSmallWrite &&
+      Number.isSafeInteger(requestedBytes) &&
+      requestedBytes >= 0 &&
+      requestedBytes <= MAX_ATTACH;
+    if (!navigator.storage?.estimate) return fallback;
     let estimate: StorageEstimate | null;
     let markerIds: string[];
     try {
@@ -1280,7 +1285,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
         allRecvMarkerIds(),
       ]);
     } catch {
-      return false;
+      return fallback;
     }
     const markers = await Promise.all(markerIds.map((id) => getRecvMarker(dek, id).catch(() => null)));
     let volatileReservations = 0;
@@ -1296,7 +1301,15 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
       persistedReservations > Number.MAX_SAFE_INTEGER - volatileReservations
         ? Number.MAX_SAFE_INTEGER
         : persistedReservations + volatileReservations;
-    return hasOriginStorageHeadroom(estimate, requestedBytes, reserved);
+    const estimateIsUsable =
+      typeof estimate?.usage === 'number' &&
+      typeof estimate?.quota === 'number' &&
+      Number.isFinite(estimate.usage) &&
+      Number.isFinite(estimate.quota) &&
+      estimate.usage >= 0 &&
+      estimate.quota > 0 &&
+      estimate.usage <= estimate.quota;
+    return hasOriginStorageHeadroom(estimate, requestedBytes, reserved) || (!estimateIsUsable && fallback);
   }
 
   function markRecvDropped(tid: string): void {
@@ -1350,7 +1363,7 @@ export function Messenger({ dek, onLock, populatingDecoy = false, onEnterDecoy, 
           AUTO_RECEIVE_CONTACT_CAP_BYTES,
           automaticRecvReservationBytes(activeMarkers, roomId),
         ) ||
-        !(await originCanReserve(data.length))
+        !(await originCanReserve(data.length, true))
       ) {
         return null;
       }
